@@ -202,3 +202,25 @@ def test_write_path_defaults_to_puffin_and_footer_still_works(cat, tmp_path):
         got = vector_search(t, "embedding", q, k=10, nprobe=FULL, selected_fields=("id",))
         assert set(got["id"].to_pylist()) == _exact(src, q)
         assert {s.index_source for s in STATS} == {loc}
+
+
+def test_copy_footer_migrates_and_index_location_forces_a_source(cat, tmp_path):
+    """attach(copy_footer=True) copies footer indexes into Puffin byte for byte;
+    SearchConfig.index_location then selects either copy, with identical results."""
+    d = tmp_path / "fi"
+    d.mkdir()
+    src = _table(3000, 4)
+    path = str(d / "f.parquet")
+    index_table(src, path, "embedding", 8, row_group_size=500)
+    tbl = create_table_from_files(cat, "vec.fi", [path])
+    entries, _ = attach_indexes(tbl, "embedding", copy_footer=True, log=lambda *a: None)
+    assert len(entries) == 1 and entries[0]["copied"]
+    tbl = cat.load_table("vec.fi")
+    q = embedding_matrix(src["embedding"])[5] + 0.05
+    out = {}
+    for loc in ("footer", "puffin", "auto"):
+        STATS.clear()
+        out[loc] = vector_search(tbl, "embedding", q, k=10, nprobe=4, index_location=loc,
+                                 selected_fields=("id",))["id"].to_pylist()
+        assert {s.index_source for s in STATS} == {"footer" if loc == "footer" else "puffin"}
+    assert out["footer"] == out["puffin"] == out["auto"]

@@ -71,6 +71,10 @@ class SearchConfig:
     # Count every read the task makes (footer, filter, blobs, vectors,
     # projection). Costs a Python hop per read; for benchmarks.
     trace_io: bool = False
+    # Which index to use when a file has one in a Puffin file and/or its footer:
+    # "auto" (Puffin, else footer), "puffin" (ignore footers), "footer"
+    # (ignore Puffin). For A/B comparisons; results are correct in every mode.
+    index_location: str = "auto"
 
 
 @dataclasses.dataclass
@@ -470,7 +474,7 @@ def search_file(src, path: str, column: str, query: np.ndarray, cfg: SearchConfi
             blob, runs, st.index_bytes, st.index_requests = read_index_blobs(index_io, index_ref)
             st.index_source = "puffin"
         else:
-            blob = read_index(src, md)
+            blob = read_index(src, md) if cfg.index_location != "puffin" else None
             runs = read_runs(src, md) if blob is not None else None
             st.index_bytes = blob_bytes(md)
             if blob is not None:

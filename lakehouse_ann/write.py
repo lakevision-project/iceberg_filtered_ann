@@ -212,16 +212,26 @@ def index_one(src_path: str, src_io, dest_io, dest_prefix: str, fields: list[Par
 
 
 def attach_one(io, path: str, size: int, rows: int, column: str, n_clusters: int,
-               min_rows_per_cluster: int = 64, ranged_runs: bool = True) -> dict | None:
-    """Index one existing data file in place (no rewrite). None if the file
-    already carries a footer index or its embedding column has nulls."""
+               min_rows_per_cluster: int = 64, ranged_runs: bool = True,
+               copy_footer: bool = False) -> dict | None:
+    """Index one existing data file in place (no rewrite). Files that already
+    carry a footer index are skipped, or with `copy_footer` their footer blobs
+    are copied byte for byte (migration to Puffin, no k-means). Files whose
+    embedding column has nulls are skipped."""
     from .build import index_existing_file
-    from .format import POINTER_KEY
+    from .footer import _pointer, _read_exact
+    from .format import POINTER_KEY, RUNS_POINTER_KEY
     t0 = time.perf_counter()
     with io.new_input(path).open() as f:
         md = pq.ParquetFile(f).metadata
-    if POINTER_KEY.encode() in (md.metadata or {}):
-        return {"data_file": path, "skipped": "footer index"}
+        if POINTER_KEY.encode() in (md.metadata or {}):
+            if not copy_footer:
+                return {"data_file": path, "skipped": "footer index"}
+            ivf = _read_exact(f, *_pointer(md, POINTER_KEY))
+            rp = _pointer(md, RUNS_POINTER_KEY)
+            runs = _read_exact(f, *rp) if rp else None
+            return {"data_file": path, "size": size, "rows": rows, "ivf": ivf, "runs": runs,
+                    "copied": True, "index_s": time.perf_counter() - t0}
     k = max(1, min(n_clusters, rows // min_rows_per_cluster))
     try:
         ivf, runs, n = index_existing_file(io, path, column, k, ranged_runs=ranged_runs)
@@ -443,11 +453,12 @@ def write_indexed_table(catalog, identifier: str, source, column: str, *,
 def attach_indexes(table, column: str, *, n_clusters: int = 256, runner: str = "local",
                    max_workers: int = 4, ray_address: str | None = None,
                    ray_cpus_per_task: float = 2, ray_memory_gb: float = 4,
-                   ranged_runs: bool = True, log=print):
+                   ranged_runs: bool = True, copy_footer: bool = False, log=print):
     """Index an EXISTING table in place: for every data file of the current
     snapshot that has no valid index yet, build one and store it in Puffin
     file(s). No data file is rewritten; works on tables written by any engine.
-    Re-running only indexes files added (or rewritten by compaction) since."""
+    Re-running only indexes files added (or rewritten by compaction) since.
+    `copy_footer` migrates footer-embedded indexes to Puffin byte for byte."""
     from .puffin import index_refs, ref_for, register
     refs = index_refs(table, column)
     files = [t.file for t in table.scan().plan_files()]
@@ -463,12 +474,13 @@ def attach_indexes(table, column: str, *, n_clusters: int = 256, runner: str = "
             ray.init(address=ray_address)
         task = ray.remote(num_cpus=ray_cpus_per_task, memory=int(ray_memory_gb * 1024**3),
                           max_retries=2)(attach_one)
-        results = ray.get([task.remote(table.io, p, sz, n, column, n_clusters, 64, ranged_runs)
+        results = ray.get([task.remote(table.io, p, sz, n, column, n_clusters, 64, ranged_runs,
+                                       copy_footer)
                            for p, sz, n in args])
     elif runner == "local":
         with ThreadPoolExecutor(max_workers) as ex:
             results = list(ex.map(lambda a: attach_one(table.io, *a, column, n_clusters, 64,
-                                                       ranged_runs), args))
+                                                       ranged_runs, copy_footer), args))
     else:
         raise ValueError(f"runner must be 'local' or 'ray', not {runner!r}")
     entries = [r for r in results if r and "ivf" in r]
@@ -543,6 +555,8 @@ def main(argv=None):
     t.add_argument("--n-clusters", type=int, default=256)
     t.add_argument("--no-ranged-runs", action="store_true",
                    help="skip locating byte runs (avoids reading whole uncompressed files)")
+    t.add_argument("--copy-footer", action="store_true",
+                   help="migrate footer-embedded indexes into Puffin (byte-for-byte copy)")
     t.add_argument("--workers", type=int, default=4)
     t.add_argument("--ray", nargs="?", const="", default=None, metavar="ADDRESS")
     a = ap.parse_args(argv)
@@ -565,7 +579,8 @@ def main(argv=None):
             ray.init(address=a.ray or None)
             runner = "ray"
         attach_indexes(cat.load_table(a.table), a.column, n_clusters=a.n_clusters, runner=runner,
-                       max_workers=a.workers, ranged_runs=not a.no_ranged_runs)
+                       max_workers=a.workers, ranged_runs=not a.no_ranged_runs,
+                       copy_footer=a.copy_footer)
         return
     source = cat.load_table(a.from_table) if a.from_table else a.input
     runner = "local"

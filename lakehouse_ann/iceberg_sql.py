@@ -172,7 +172,7 @@ class IcebergFilesSource(DataSource):
         if pushdowns.limit is not None:      # not pushed through a Sort, but be safe
             cfg = dataclasses.replace(cfg, k=max(cfg.k, pushdowns.limit))
 
-        refs = index_refs(self._table, self._column)      # Puffin indexes, if any
+        refs = {} if cfg.index_location == "footer" else index_refs(self._table, self._column)
         for task in planned:
             expr, cols = _arrow_filter(self._table, task.residual)
             deleted = _deleted_positions(self._table, task)

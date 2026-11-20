@@ -88,7 +88,7 @@ def vector_search(tbl: Table, column: str, query, k: int = 10, *,
         return pa.table({})
 
     from .puffin import index_refs, ref_for
-    refs = index_refs(tbl, column)         # Puffin indexes, if any
+    refs = {} if cfg.index_location == "footer" else index_refs(tbl, column)  # Puffin, if any
 
     def one(task):
         path = task.file.file_path

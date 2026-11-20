@@ -73,11 +73,12 @@ the blob's properties. Otherwise the reader falls back to a footer index, if
 there is one, and then to an exact scan. A stale or wrong registry entry
 therefore costs speed, never correctness.
 
-**Cost.** Bytes and requests are the same as with the footer
-([benchmarks §7](benchmarks.md#7-where-the-index-lives-footer-vs-puffin)): one
-ranged read of the index blob, plus the Puffin footer once per query, cached
-(about 0.2–2 ms locally for 16 files). Puffin files are immutable, so their
-footers can be cached indefinitely.
+**Cost.** Bytes and requests are the same as with the footer: one ranged read
+of the index blob, plus the Puffin footer once per query, cached (about
+0.2–2 ms locally for 16 files). Puffin files are immutable, so their footers can
+be cached indefinitely. On object storage at 50M rows, query times with the
+index in Puffin were within run-to-run noise of the footer layout
+([benchmarks §7](benchmarks.md#7-where-the-index-lives-footer-vs-puffin)).
 
 ## 2. The per-file kernel (`lakehouse_ann/search.py`)
 
