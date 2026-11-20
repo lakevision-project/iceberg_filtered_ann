@@ -62,10 +62,14 @@ per-file index.
    with no error.
 2. **10× less I/O** for unfiltered and moderately selective (≥ 10%) filters, at
    recall 1.00.
-3. **Sorting rows by cluster inside each file is essential.** With the original
-   row order (`bench/results/local_1m_scattered.json`), candidates are spread
-   through the file and the coalesced reads cover almost the whole column:
-   534 MB against 52 MB unfiltered, no better than brute force.
+3. **Sorting rows by cluster is optional, but it drives the I/O saving.** Results
+   are correct either way. In the original row order
+   (`bench/results/local_1m_scattered.json`), candidates are spread through the
+   file and the coalesced reads cover almost the whole column: 534 MB against
+   52 MB unfiltered, close to brute force. Pruning doesn't replace it: in §4 both
+   copies prune to the same 2 files, and the sorted copy with small row groups
+   is still 6.1× faster, because pruning picks the files and the in-file layout
+   sets the bytes read inside each one.
 4. **Very selective filters (≤ 1%) trade cost against recall.** The planner
    switches to exact scoring when that is cheap (0.1% → recall 1.00), but
    scattered matching rows are expensive to fetch one by one. `filtered_overfetch`

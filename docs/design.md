@@ -101,12 +101,21 @@ pushed into every task (`pushdowns.filters`); one placed after
   There, a mixed file's centroids rank clusters poorly for the matching
   subset, and recall drops to about 0.4–0.5. Partitioned, the same query
   reaches 0.97 while reading 1 of 20 files.
-* **Sort rows by cluster inside each file.** The writer reorders a file's rows
-  by IVF cluster, so every posting list is one contiguous run of rows and of
-  bytes. A probe then reads about `nprobe` ranges instead of thousands of
-  scattered vectors. With the original row order, coalesced reads cover almost
-  the whole column (534 MB against 52 MB unfiltered), no better than brute force.
-  Row order inside a new data file has no meaning in Iceberg, so this is free.
+* **Optionally, sort rows by cluster inside each file.** This isn't needed for
+  correctness. Any row order is searched correctly with the same recall, and pruning
+  and filter-during-ranking work the same. It is a performance optimization,
+  and on object storage a large one. The writer (by default) reorders a file's rows by IVF
+  cluster, so every posting list is one contiguous run of rows and of bytes,
+  and a probe reads about `nprobe` ranges instead of thousands of scattered
+  vectors. Pruning can't substitute for it: pruning decides *which* files are
+  searched (by the scalar filter), while sorting decides how many bytes each
+  searched file costs (by the vector). In the original row order, the probe
+  still scores only a fraction of the vectors, but the coalesced reads cover
+  almost the whole column (534 MB against 52 MB unfiltered), close to brute
+  force. Row order inside a new data file has no meaning in Iceberg, so the
+  sort costs nothing at write time. The one trade-off is that it uses up the file's
+  sort order, so the file can't also be sorted by another column to sharpen
+  row-group statistics. Turn it off with `cluster_sort=False` / `--no-cluster-sort`.
 * **Row groups sized to clusters.** With a compressed embedding column,
   vectors are fetched by row group. Keep `row_group_size` near
   `rows / n_clusters` so a probe reads a few whole groups at about 1.3×

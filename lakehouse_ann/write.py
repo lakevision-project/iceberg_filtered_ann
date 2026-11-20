@@ -16,8 +16,11 @@ Per input file, one unit of work (a thread, or a Ray task with `runner="ray"`):
              partition field — pyiceberg's add_files() infers the partition
              from the file's column statistics and needs that;
   3. index   lakehouse_ann.build.index_table: k-means on the file's own vectors,
-             rows SORTED by cluster (each posting list is one contiguous run),
-             IFVI blob spliced in front of the Parquet footer;
+             IFVI blob spliced in front of the Parquet footer. By default the
+             rows are also SORTED by cluster (each posting list becomes one
+             contiguous run). That's optional (cluster_sort=False keeps the
+             input order and stays correct), but it is what makes a probe read
+             a few byte ranges instead of most of the file;
   4. verify  footer pointer, blob row/cluster counts, statistics on the
              partition columns;
   5. upload  under <table location>/data/<partition path>/ — idempotent: a file
@@ -81,6 +84,7 @@ class IndexOptions:
     n_clusters: int = 256
     row_group_size: int = 512
     compress_embedding: bool = True
+    cluster_sort: bool = True          # optional; a large I/O win, not needed for correctness
     min_rows_per_cluster: int = 64     # small files/partitions get fewer clusters
     max_rows_per_file: int = 500_000   # larger inputs are split into several indexed files
 
@@ -152,7 +156,8 @@ def index_one(src_path: str, src_io, dest_io, dest_prefix: str, fields: list[Par
             local = os.path.join(d, "out.parquet")
             t0 = time.perf_counter()
             index_table(part, local, opts.column, k, row_group_size=opts.row_group_size,
-                        compress_embedding=opts.compress_embedding)
+                        compress_embedding=opts.compress_embedding,
+                        cluster_rows=opts.cluster_sort)
             rec["index_s"] = time.perf_counter() - t0
             md = pq.read_metadata(local)
             with open(local, "rb") as fh:
@@ -238,7 +243,8 @@ def _ensure_table(catalog, identifier, schema: pa.Schema, fields, properties):
 
 def write_indexed_table(catalog, identifier: str, source, column: str, *,
                         partition_by=(), n_clusters: int = 256, row_group_size: int = 512,
-                        compress_embedding: bool = True, max_rows_per_file: int = 500_000,
+                        compress_embedding: bool = True, cluster_sort: bool = True,
+                        max_rows_per_file: int = 500_000,
                         runner: str = "local",
                         max_workers: int = 4, ray_address: str | None = None,
                         ray_cpus_per_task: float = 2, ray_memory_gb: float = 6,
@@ -251,12 +257,16 @@ def write_indexed_table(catalog, identifier: str, source, column: str, *,
             table is created; an existing table keeps its spec.
     runner: "local" (thread pool, `max_workers`) or "ray" (one task per input
             file on an existing or local Ray cluster).
+    cluster_sort: sort each file's rows by IVF cluster (default). Optional:
+            unsorted files search correctly with the same recall; sorting is a
+            performance optimization (contiguous probe reads).
     """
     from pyiceberg.table import Table
 
     fields = [PartitionField.parse(s) for s in partition_by]
     opts = IndexOptions(column=column, n_clusters=n_clusters, row_group_size=row_group_size,
-                        compress_embedding=compress_embedding, max_rows_per_file=max_rows_per_file)
+                        compress_embedding=compress_embedding, cluster_sort=cluster_sort,
+                        max_rows_per_file=max_rows_per_file)
     if isinstance(source, Table):
         src_io = source.io
         inputs = sorted(t.file.file_path for t in source.scan().plan_files())
@@ -371,6 +381,8 @@ def main(argv=None):
     i.add_argument("--row-group-size", type=int, default=512)
     i.add_argument("--no-compress-embedding", action="store_true",
                    help="write the embedding PLAIN+uncompressed (adds IFVR byte runs)")
+    i.add_argument("--no-cluster-sort", action="store_true",
+                   help="keep the input row order (correct, but probes read more bytes)")
     i.add_argument("--max-rows-per-file", type=int, default=500_000)
     i.add_argument("--workers", type=int, default=4, help="threads for the local runner")
     i.add_argument("--ray", nargs="?", const="", default=None, metavar="ADDRESS",
@@ -397,6 +409,7 @@ def main(argv=None):
     write_indexed_table(cat, a.dest, source, a.column, partition_by=a.partition_by,
                         n_clusters=a.n_clusters, row_group_size=a.row_group_size,
                         compress_embedding=not a.no_compress_embedding,
+                        cluster_sort=not a.no_cluster_sort,
                         max_rows_per_file=a.max_rows_per_file, runner=runner,
                         max_workers=a.workers)
 

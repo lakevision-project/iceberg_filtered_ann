@@ -3,9 +3,10 @@
     python -m lakehouse_ann.build IN.parquet [IN2.parquet ...] --out-dir DIR \
         --column emb --n-clusters 64
 
-Each input file is rewritten (same rows, same order — the index stores
-file-local row ordinals) with the blob attached. Row order is never changed,
-so the ordinals Daft would assign stay valid.
+Each input file is rewritten (same rows) with the blob attached. By default the
+rows are reordered by IVF cluster, a performance optimization that makes each
+posting list contiguous; --keep-row-order skips it, and the result is still
+correct. The index stores file-local row ordinals of the file as written.
 """
 from __future__ import annotations
 

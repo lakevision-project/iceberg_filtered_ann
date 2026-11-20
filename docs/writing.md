@@ -73,8 +73,8 @@ Ray task with `runner="ray"`:
 1. **read** the file through the catalog's FileIO (local, S3, …);
 2. **split** it by partition value, and into pieces of at most `max_rows_per_file`;
 3. **index** each piece: k-means on its own vectors (`n_clusters`, capped at
-   about one cluster per 64 rows for small pieces), rows **sorted by cluster**,
-   the IVF blob spliced in front of the footer;
+   about one cluster per 64 rows for small pieces), rows **sorted by cluster**
+   (optional, on by default; see below), and the IVF blob spliced in front of the footer;
 4. **verify** the footer pointer, the blob's row and cluster counts, and statistics on the
    partition columns;
 5. **upload** under `<table location>/data/<partition path>/`. A file already
@@ -102,6 +102,7 @@ every worker, which means object storage on a real cluster.
 | `n_clusters` | **A few hundred per file**, so that clusters are at least as large as a row group (`rows / n_clusters ≥ row_group_size`). More clusters give finer probes; fewer give more matching rows per probe. |
 | `row_group_size` | With a compressed embedding column (the default), vectors are fetched by whole row group: match it to the cluster size (about 512) so a probe reads a few groups at about 1.3× amplification. With `--no-compress-embedding`, the writer also records IFVR byte runs and fetches exact ranges, so row-group size matters much less. |
 | partitioning | **Partition by the columns you filter on.** Pure files are pruned by the catalog and need no filter inside. That is also the fix for filters correlated with the vectors ([design §4](design.md#4-layout-where-most-of-the-speed-comes-from)). |
+| cluster sort | **On by default; optional.** It isn't needed for correct results, but each probe then reads a few contiguous ranges instead of most of the file (about 10× less I/O in our tests). Turn it off (`--no-cluster-sort`) only if you need the file's row order for something else, such as sorting by a column to sharpen its row-group statistics. |
 | compression | Float32 embeddings barely compress (about 1% on the Granite tables), so the choice is about fetch granularity. zstd (default) means whole-row-group fetches, so keep the groups small. Uncompressed PLAIN adds IFVR exact ranged reads. |
 
 ## Scale reference

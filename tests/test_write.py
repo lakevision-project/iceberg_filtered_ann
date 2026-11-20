@@ -121,3 +121,17 @@ def test_written_table_searches_exactly_with_full_probe(env):
     got = vector_search(t, "embedding", q, k=10, row_filter="category = 'news'",
                         nprobe=10_000, selected_fields=("id",))
     assert set(got["id"].to_pylist()) == want
+
+
+def test_cluster_sort_is_optional(env):
+    """cluster_sort=False keeps the input row order and searches exactly the same."""
+    cat, glob, src = env
+    t = _write(cat, glob, cluster_sort=False)
+    f = sorted(t.scan().plan_files(), key=lambda x: x.file.file_path)[0]
+    ids = pq.read_table(f.file.file_path, columns=["id"])["id"].to_numpy()
+    assert np.all(np.diff(ids) > 0)                      # input order kept (ids ascend)
+    E = embedding_matrix(src["embedding"])
+    q = E[7] + 0.05
+    want = set(src["id"].to_numpy()[np.argsort(np.linalg.norm(E - q, axis=1))[:10]])
+    got = vector_search(t, "embedding", q, k=10, nprobe=10_000, selected_fields=("id",))
+    assert set(got["id"].to_pylist()) == want

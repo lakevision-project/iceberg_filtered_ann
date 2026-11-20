@@ -32,9 +32,11 @@ built on open engines: [pyiceberg](https://py.iceberg.apache.org/),
    fail the predicate are removed from the IVF candidate lists *before*
    scoring. Top-k-then-filter (post-filtering) silently returns too few rows
    when the filter is selective. This doesn't.
-4. **Layout does the rest.** Partition by the columns you filter on. A file
-   whose partition proves the predicate needs no filter at all. Within a file,
-   rows are sorted by cluster, so a probe reads a few contiguous byte ranges.
+4. **Layout makes it fast.** Partition by the columns you filter on. A file
+   whose partition proves the predicate needs no filter at all. Optionally,
+   sort each file's rows by cluster (the writer does this by default). It isn't
+   needed for correct results, but a probe then reads a few contiguous byte
+   ranges instead of most of the file.
 5. **It is still plain Iceberg.** Snapshots, time travel and deletes keep
    working. A file without an index (for example, one rewritten by a delete) is
    scanned exactly, so answers stay correct while the index catches up.
@@ -95,7 +97,8 @@ python -m lakehouse_ann.write index --catalog prod --dest vec.docs \
     --ray ray://head:10001
 ```
 
-`index` builds a k-means index per output file, sorts rows by cluster, splices
+`index` builds a k-means index per output file, sorts rows by cluster (optional;
+`--no-cluster-sort` keeps the input order), splices
 the index into the footer, uploads, and registers everything with one Iceberg
 `add_files` commit. Every output file holds a single partition value. It can also
 re-index an existing table (`--from-table`) and is safe to re-run. The same API
@@ -142,7 +145,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[test]"          # core; add ,ray and/or ,embed for those modes
 python bench/make_data.py --out data          # synthetic 1M x 128, ~1 min
 python bench/iceberg_demo.py                  # local SQLite catalog + the pyiceberg demo
-pytest -q                                     # 36 tests, no network (data-dependent ones skip without the two steps above)
+pytest -q                                     # 37 tests, no network (data-dependent ones skip without the two steps above)
 python examples/01_pyiceberg.py               # ... 02_daft, 03_sql, 04_ray
 examples/write_local.sh                       # embed -> index -> register -> query
 ```
