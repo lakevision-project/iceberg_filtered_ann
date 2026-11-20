@@ -1,17 +1,20 @@
 # Vector search in other engines
 
-The index is a property of **data files**, not of an engine. Every indexed
-file is ordinary Parquet, so any engine can read these tables today. An engine
-that also wants *fast filtered vector search* adds a small amount of code,
-described on this page. Nothing here needs changes to the Iceberg spec or to
-other engines, and engines can adopt it independently and incrementally.
+The index is a property of **data files**, not of an engine. Each data file
+has a small IVF index, stored by default as a blob in an Iceberg Puffin file
+next to the data. The data files themselves are ordinary Parquet, so any engine
+can read these tables today. An engine that also wants *fast filtered vector
+search* adds a small amount of code, described on this page. Nothing here needs
+changes to the Iceberg spec or to other engines, and engines can adopt it
+independently and incrementally.
 
 ## Level 0: read the table (no work)
 
 Every engine that reads Iceberg + Parquet already reads these tables. The
-index blobs sit outside the Parquet footer, where readers never look. An
-engine with a vector distance function can already answer the query exactly by
-brute force:
+indexes live in Puffin files that only index-aware readers open (or, in the
+optional footer layout, in bytes outside the Parquet footer that readers never
+look at). An engine with a vector distance function can already answer the
+query exactly by brute force:
 
 ```sql
 SELECT id, l2_distance(embedding, :q) AS d
@@ -27,19 +30,19 @@ every surviving file. The levels below avoid that.
 Add one function that searches **one data file**:
 
 ```
-search_file(file, query_vector, k, predicate, deleted_positions) -> top-k rows + distance
+search_file(file, index_location, query_vector, k, predicate, deleted_positions)
+    -> top-k rows + distance
 ```
 
-A minimal correct version:
+`index_location` is found at planning time (Level 2): a Puffin path plus offset
+and length, or nothing. A minimal correct version:
 
 ```
 1. mask   = rows of `file` matching `predicate`, minus `deleted_positions`
             (read only the predicate's columns)
-2. if the file has no index        -> score every masked row exactly, return top-k
-3. index  = the file's blob in a Puffin file (from the table's index registry;
-            use it only if the blob's referenced-data-file, size and row count
-            match this file), else the footer KV pointer `ifs.vector.index.v1`;
-            one ranged read either way
+2. index  = one ranged read of `index_location`
+            (optional: if none, check the file's footer KV pointer `ifs.vector.index.v1`)
+3. if there is no index            -> score every masked row exactly, return top-k
 4. probe the clusters nearest to `query_vector`, in order; from each posting
    list keep only rows in `mask`; stop after `nprobe` clusters that had matches
    AND at least ~16·k candidates
@@ -50,6 +53,11 @@ A minimal correct version:
 * The index layout is documented in [design §1](design.md#1-an-indexed-parquet-file)
   and `lakehouse_ann/format.py`: a header, centroids, and posting lists of row
   positions within the file. Parsing it takes a few dozen lines.
+* Step 5 can read whole row groups of the embedding column. If the file also
+  has a `lakehouse-ann-ivf-runs-v1` blob, it gives each vector's byte offset in
+  the data file, so single vectors can be fetched with ranged reads instead.
+* Supporting the footer layout is optional. An engine can support Puffin only;
+  files it finds no index for are simply searched exactly.
 * Row positions in the index are the same positions Iceberg positional deletes
   and deletion vectors use, so deletes are just part of the mask.
 * Step 4 is what "filter during ranking" means: non-matching rows are dropped
@@ -62,9 +70,23 @@ A minimal correct version:
 ## Level 2: call it from a query
 
 The engine plans the scan as it already does: Iceberg pruning, residual filter
-per file, delete files. Then, instead of scanning each file, it calls
-`search_file` and merges the per-file results with its normal top-k
-(`ORDER BY distance LIMIT k`). The simplest way to expose this is a
+per file, delete files. It adds **one step: find each file's index**.
+
+```
+registry = table property "lakehouse_ann.index.<column>"   -> list of Puffin paths
+for each Puffin file: read its footer (a small JSON; cache it, Puffin files never change)
+for each blob of type lakehouse-ann-ivf-v1:
+    index_location[blob.properties["referenced-data-file"]] = (puffin path, offset, length)
+```
+
+Later Puffin files in the list override earlier ones. A planned file gets its
+`index_location` only if the blob's `data-file-size-in-bytes` and
+`record-count` match the file (rule 4). This is the same lookup engines already
+do for v3 deletion vectors, which are also Puffin blobs keyed by data file.
+
+Then, instead of scanning each file, the engine calls `search_file` and merges
+the per-file results with its normal top-k (`ORDER BY distance LIMIT k`). The
+simplest way to expose this is a
 **table function** (or read option) that takes the vector and `k`:
 
 ```sql
@@ -78,7 +100,7 @@ Optionally, an optimizer rule can later recognise
 `ORDER BY l2_distance(embedding, :q) LIMIT k` over a table scan and rewrite it to
 the same thing, so plain SQL works.
 
-## Three rules for correct results
+## Four rules for correct results
 
 1. **The predicate must be applied inside `search_file`.** If the engine pushes
    the top-k into the scan but applies the WHERE clause *after* it, results
@@ -87,11 +109,16 @@ the same thing, so plain SQL works.
 2. **Per-file `k` must be at least the query's `LIMIT`.**
 3. **A file without an index is searched exactly.** Files written or compacted by
    writers that don't build the index stay correct, just slower, until re-indexed.
+4. **Use an index only for the exact file it was built for.** The posting lists
+   are row positions in one specific data file. Match the blob's
+   `referenced-data-file`, `data-file-size-in-bytes` and `record-count` against
+   the planned file, and treat any mismatch as "no index" (rule 3).
 
 ## Notes per engine
 
 These describe the natural extension point in each engine as we understand it;
-verify against the version you target.
+verify against the version you target. Engines that already read v3 deletion
+vectors already have a Puffin reader, and can reuse it for the index blobs.
 
 | engine | where it plugs in | notes |
 |---|---|---|
