@@ -160,4 +160,5 @@ alternative.
 
 Everything else (k-means, probing strategy, cost model, caching) can stay
 an implementation choice for each engine. Two engines with different search code
-still return correct results from the same files.
+still return correct results from the same files. GPU builds and GPU search
+(for example with cuVS, see [cuvs.md](cuvs.md)) fit the same way.

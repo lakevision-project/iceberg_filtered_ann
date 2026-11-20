@@ -153,7 +153,9 @@ its own is in [docs/why-daft.md](docs/why-daft.md).
 
 The index itself is engine-neutral: every file stays plain Parquet. For what
 Spark, Trino, DuckDB or any other engine would add to search it fast, see
-[docs/other-engines.md](docs/other-engines.md).
+[docs/other-engines.md](docs/other-engines.md). For where GPU acceleration with NVIDIA
+cuVS could fit (index builds, compressed codes, batched filtered search), see
+[docs/cuvs.md](docs/cuvs.md).
 
 ## Quick start
 
@@ -185,7 +187,7 @@ lakehouse_ann/   format.py              IFVI/IFVR index blobs
 examples/        one script per query mode, write-path scripts, remote catalog
 bench/           synthetic data, local benchmarks, SQL demo, Ray benchmark, results/*.json
 deploy/          Ray on Kubernetes: manifest, deploy script, Dockerfile
-docs/            design, querying, writing, benchmarks, why Daft, other engines
+docs/            design, querying, writing, benchmarks, why Daft, other engines, cuVS
 tests/           format, footer, kernel, writer, all front ends, write path
 ```
 
@@ -193,7 +195,7 @@ tests/           format, footer, kernel, writer, all front ends, write path
 
 This is research code that accompanies the paper. It supports **L2 distance** only;
 for cosine, normalize the vectors, which `embed` does by default. It has no PQ compression
-and doesn't prune across files by vector distance: the per-file centroid and radius
+(see [docs/cuvs.md](docs/cuvs.md) for a GPU path to it), and doesn't prune across files by vector distance: the per-file centroid and radius
 are written but not yet used. Equality deletes are not supported (positional
 deletes and deletion vectors are). See the limits sections of the docs.
 
