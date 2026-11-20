@@ -1,0 +1,4 @@
+# Distributed mode (Ray runner, distributed write path). Same as: pip install -e ".[ray]"
+-r requirements.txt
+daft[ray]==0.7.26
+ray[default,data,client]==2.59.1

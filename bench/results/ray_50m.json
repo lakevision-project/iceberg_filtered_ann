@@ -1,0 +1,218 @@
+[
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "no-filter",
+  "q": 0,
+  "s": 25.311182038858533,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "no-filter",
+  "q": 1,
+  "s": 24.879184190183878,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "no-filter",
+  "q": 2,
+  "s": 24.29358047991991,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band [400,600)",
+  "q": 0,
+  "s": 6.006533436477184,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band [400,600)",
+  "q": 1,
+  "s": 6.19722287543118,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band [400,600)",
+  "q": 2,
+  "s": 5.364731103181839,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band + cid<450",
+  "q": 0,
+  "s": 18.752176260575652,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band + cid<450",
+  "q": 1,
+  "s": 19.45665944367647,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "band + cid<450",
+  "q": 2,
+  "s": 22.73279832303524,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "IN 5 ids (0.5%)",
+  "q": 0,
+  "s": 88.09806716814637,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "IN 5 ids (0.5%)",
+  "q": 1,
+  "s": 87.79977532848716,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "case": "IN 5 ids (0.5%)",
+  "q": 2,
+  "s": 101.03178610093892,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "no-filter",
+  "q": 0,
+  "s": 79.8780865445733,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "no-filter",
+  "q": 1,
+  "s": 83.05529635213315,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "no-filter",
+  "q": 2,
+  "s": 89.72305383905768,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band [400,600)",
+  "q": 0,
+  "s": 25.277907667681575,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band [400,600)",
+  "q": 1,
+  "s": 23.637068539857864,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band [400,600)",
+  "q": 2,
+  "s": 22.195414451882243,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band + cid<450",
+  "q": 0,
+  "s": 33.040593426674604,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band + cid<450",
+  "q": 1,
+  "s": 29.352584019303322,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "band + cid<450",
+  "q": 2,
+  "s": 25.664956791326404,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "IN 5 ids (0.5%)",
+  "q": 0,
+  "s": 74.57174245081842,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "IN 5 ids (0.5%)",
+  "q": 1,
+  "s": 79.62627016939223,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/baseline",
+  "case": "IN 5 ids (0.5%)",
+  "q": 2,
+  "s": 78.07919089309871,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ }
+]

@@ -1,0 +1,127 @@
+{
+ "rows": 1000000,
+ "dim": 128,
+ "files": 16,
+ "k": 10,
+ "nprobe": 8,
+ "queries": 10,
+ "s3_model": {
+  "rtt_ms": 30.0,
+  "GBps": 1.0,
+  "concurrency": 64
+ },
+ "probe_rule": "matched",
+ "data": "data/indexed_scattered",
+ "embedding_MB": 512.0,
+ "results": [
+  {
+   "filter": "none",
+   "selectivity": 1.0,
+   "brute": {
+    "p50_ms": 238.97699941881,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "ivf": {
+    "p50_ms": 248.52647888474166,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "post": {
+    "p50_ms": 180.32379145734012,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "io": {
+    "brute_MB": 519.788081,
+    "brute_requests": 272,
+    "ivf_MB": 533.6384665,
+    "ivf_requests": 180.3,
+    "s3_model_brute_ms": 669.7880809999999,
+    "s3_model_ivf_ms": 623.6384665
+   },
+   "ivf_trace": {
+    "vector_MB_per_query": 524.4752015,
+    "vector_requests_per_query": 39.8,
+    "candidates_per_query": 84747.5,
+    "clusters_probed_per_query": 128.0,
+    "plans_per_query": {
+     "ivf": 16.0
+    }
+   }
+  },
+  {
+   "filter": "tier=p10 (10%)",
+   "selectivity": 0.100074,
+   "brute": {
+    "p50_ms": 90.93197900801897,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "ivf": {
+    "p50_ms": 295.21877062506974,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "post": {
+    "p50_ms": 180.11808348819613,
+    "recall": 0.07999999999999999,
+    "avg_rows": 0.8
+   },
+   "io": {
+    "brute_MB": 520.046137,
+    "brute_requests": 400,
+    "ivf_MB": 535.3849501,
+    "ivf_requests": 300.2,
+    "s3_model_brute_ms": 730.046137,
+    "s3_model_ivf_ms": 685.3849501
+   },
+   "ivf_trace": {
+    "vector_MB_per_query": 525.751163,
+    "vector_requests_per_query": 31.0,
+    "candidates_per_query": 100074.0,
+    "clusters_probed_per_query": 0.0,
+    "plans_per_query": {
+     "exact:filtered": 16.0
+    }
+   }
+  },
+  {
+   "filter": "price<5 & tier=p10 (0.5%)",
+   "selectivity": 0.005009,
+   "brute": {
+    "p50_ms": 58.73766646254808,
+    "recall": 1.0,
+    "avg_rows": 10.0
+   },
+   "ivf": {
+    "p50_ms": 147.19229144975543,
+    "recall": 0.9700000000000001,
+    "avg_rows": 10.0
+   },
+   "post": {
+    "p50_ms": 168.53068803902715,
+    "recall": 0.0,
+    "avg_rows": 0.0
+   },
+   "io": {
+    "brute_MB": 529.176213,
+    "brute_requests": 528,
+    "ivf_MB": 159.9346875,
+    "ivf_requests": 1689.9,
+    "s3_model_brute_ms": 799.176213,
+    "s3_model_ivf_ms": 969.9346875
+   },
+   "ivf_trace": {
+    "vector_MB_per_query": 133.2756061,
+    "vector_requests_per_query": 1420.0,
+    "candidates_per_query": 3965.6,
+    "clusters_probed_per_query": 337.1,
+    "plans_per_query": {
+     "exact:filtered": 9.5,
+     "ivf:filtered": 6.5
+    }
+   }
+  }
+ ]
+}

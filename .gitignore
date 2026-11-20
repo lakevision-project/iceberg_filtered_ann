@@ -1,0 +1,19 @@
+.venv/
+data/
+scratch/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# credentials and local settings — never commit
+*.env
+.env*
+.pyiceberg.yaml
+
+# local staging / build caches
+.stage-*/
+ray_bench.json*
+
+.DS_Store

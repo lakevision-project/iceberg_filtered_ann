@@ -1,0 +1,145 @@
+# A plain Ray cluster for lakehouse_ann: 1 head + N workers, no operator needed.
+# (With KubeRay installed, a RayCluster resource with the same image is equivalent.)
+#
+# Rendered by deploy.sh (envsubst): ${IMAGE} ${WORKERS} ${WORKER_CPUS} ${WORKER_MEM}.
+#
+# Two ways to get the software onto the pods:
+#   * a custom image built from deploy/kubernetes/Dockerfile (recommended) — the
+#     init container sees lakehouse_ann already installed and does nothing;
+#   * a stock Python image (IMAGE=python:3.12-slim, the default) when you have no
+#     registry — the init container pip-installs the pinned stack into a shared
+#     venv and the package code comes from configmap/lakehouse-ann-code.
+#
+# No storage credentials are needed here: the catalog's FileIO (with its
+# properties) travels inside every task the driver submits.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lakehouse-ann-install
+data:
+  install.sh: |
+    set -e
+    if python3 -c "import lakehouse_ann, ray, daft" 2>/dev/null; then
+      ln -s "$(dirname "$(dirname "$(command -v python3)")")" /env/venv; echo "image already has lakehouse_ann"; exit 0
+    fi
+    python3 -m venv /env/venv
+    /env/venv/bin/pip install --no-cache-dir -q \
+      "ray[default,data,client]==2.59.1" "daft==0.7.26" "pyiceberg==0.12.0" \
+      "pyarrow==25.0.1" "numpy==2.5.4"
+    /env/venv/bin/python -c "import daft, ray, pyiceberg; print('env ok', daft.__version__, ray.__version__)"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-head
+  labels: {app: ray, component: head}
+spec:
+  selector: {app: ray, component: head}
+  ports:
+    - {name: gcs, port: 6379}
+    - {name: dashboard, port: 8265}
+    - {name: client, port: 10001}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-head
+  labels: {app: ray, component: head}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ray, component: head}
+  template:
+    metadata:
+      labels: {app: ray, component: head}
+    spec:
+      initContainers:
+        - name: install
+          image: ${IMAGE}
+          command: ["/bin/sh", "/install/install.sh"]
+          env: [{name: HOME, value: /tmp}]
+          volumeMounts:
+            - {name: env, mountPath: /env}
+            - {name: install, mountPath: /install}
+      containers:
+        - name: ray-head
+          image: ${IMAGE}
+          # num-cpus=0: the head coordinates and hosts the driver; scan,
+          # index and embedding tasks all land on workers.
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              exec /env/venv/bin/ray start --head --num-cpus=0 --port=6379
+              --dashboard-host=0.0.0.0 --ray-client-server-port=10001
+              --object-store-memory=2000000000 --block
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: PYTHONPATH, value: /app}
+            - {name: PYTHONUNBUFFERED, value: "1"}
+            - {name: PATH, value: "/env/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+          resources:
+            requests: {cpu: "4", memory: 16Gi}
+            limits: {cpu: "4", memory: 16Gi}
+          volumeMounts:
+            - {name: env, mountPath: /env}
+            - {name: code, mountPath: /app/lakehouse_ann}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - {name: env, emptyDir: {}}
+        - {name: install, configMap: {name: lakehouse-ann-install}}
+        - {name: code, configMap: {name: lakehouse-ann-code}}
+        - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-worker
+  labels: {app: ray, component: worker}
+spec:
+  replicas: ${WORKERS}
+  selector:
+    matchLabels: {app: ray, component: worker}
+  template:
+    metadata:
+      labels: {app: ray, component: worker}
+    spec:
+      # one worker per node where possible
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: ray, component: worker}
+      initContainers:
+        - name: install
+          image: ${IMAGE}
+          command: ["/bin/sh", "/install/install.sh"]
+          env: [{name: HOME, value: /tmp}]
+          volumeMounts:
+            - {name: env, mountPath: /env}
+            - {name: install, mountPath: /install}
+      containers:
+        - name: ray-worker
+          image: ${IMAGE}
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              exec /env/venv/bin/ray start --address=ray-head:6379 --num-cpus=${WORKER_CPUS}
+              --object-store-memory=8000000000 --block
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: PYTHONPATH, value: /app}
+            - {name: PYTHONUNBUFFERED, value: "1"}
+            - {name: PATH, value: "/env/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+          resources:
+            requests: {cpu: "${WORKER_CPUS}", memory: "${WORKER_MEM}"}
+            limits: {cpu: "${WORKER_CPUS}", memory: "${WORKER_MEM}"}
+          volumeMounts:
+            - {name: env, mountPath: /env}
+            - {name: code, mountPath: /app/lakehouse_ann}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - {name: env, emptyDir: {}}
+        - {name: install, configMap: {name: lakehouse-ann-install}}
+        - {name: code, configMap: {name: lakehouse-ann-code}}
+        - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}

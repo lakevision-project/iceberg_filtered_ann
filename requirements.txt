@@ -1,0 +1,6 @@
+# Core: the library, the local demos and the tests.  (pip install -e . does the same)
+daft==0.7.26
+numpy==2.5.4
+pyarrow==25.0.1
+pyiceberg[sql-sqlite]==0.12.0
+pytest==9.1.1

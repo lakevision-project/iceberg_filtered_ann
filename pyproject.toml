@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lakehouse-ann"
+version = "0.1.0"
+description = "Filtered vector search on an Iceberg lakehouse: per-file IVF indexes in the Parquet footer, Iceberg pruning, filter during ranking."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "daft==0.7.26",
+  "pyiceberg[sql-sqlite]==0.12.0",
+  "pyarrow==25.0.1",
+  "numpy==2.5.4",
+]
+
+[project.optional-dependencies]
+ray = ["daft[ray]==0.7.26", "ray[default,data,client]==2.59.1"]
+embed = ["sentence-transformers>=3"]
+test = ["pytest>=8"]
+all = ["lakehouse-ann[ray,embed,test]"]
+
+[tool.setuptools]
+packages = ["lakehouse_ann"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

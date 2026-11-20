@@ -1,0 +1,122 @@
+[
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "band + cid<450",
+  "q": 0,
+  "s": 30.30223022028804,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "band + cid<450",
+  "q": 1,
+  "s": 18.253013847395778,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "band + cid<450",
+  "q": 2,
+  "s": 19.104069935157895,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "IN 5 ids (0.5%)",
+  "q": 0,
+  "s": 127.09169921651483,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "IN 5 ids (0.5%)",
+  "q": 1,
+  "s": 87.68441363610327,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "per_rg",
+  "case": "IN 5 ids (0.5%)",
+  "q": 2,
+  "s": 84.17668793536723,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "band + cid<450",
+  "q": 0,
+  "s": 9.00757211074233,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "band + cid<450",
+  "q": 1,
+  "s": 8.18683160096407,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "band + cid<450",
+  "q": 2,
+  "s": 7.481775620952249,
+  "recall": 10,
+  "rows": 10,
+  "files": 50
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "IN 5 ids (0.5%)",
+  "q": 0,
+  "s": 31.868587160483003,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "IN 5 ids (0.5%)",
+  "q": 1,
+  "s": 33.98009152337909,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ },
+ {
+  "table": "granite50m/lakehouse-ann",
+  "variant": "batched",
+  "case": "IN 5 ids (0.5%)",
+  "q": 2,
+  "s": 35.41672618314624,
+  "recall": 10,
+  "rows": 10,
+  "files": 250
+ }
+]
