@@ -68,6 +68,7 @@ from pyiceberg.io.pyarrow import schema_to_pyarrow
 from pyiceberg.table import Table
 
 from .iceberg import _arrow_filter, _deleted_positions
+from .puffin import index_refs, ref_for
 from .search import DISTANCE_COL, SearchConfig, search_file
 
 __all__ = ["IcebergFilesSource", "read_ivf_iceberg", "ann_sql"]
@@ -80,8 +81,10 @@ _LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)", re.IGNORECASE)
 class IcebergScanTask(DataSourceTask):
     """One planned Iceberg file: residual filter + deletes + IVF search."""
 
-    def __init__(self, io, path, column, query, cfg, out_schema, filter_expr, filter_cols, deleted):
+    def __init__(self, io, path, column, query, cfg, out_schema, filter_expr, filter_cols, deleted,
+                 index_ref=None):
         self._io, self._path, self._column = io, path, column
+        self._index_ref = index_ref
         self._query, self._cfg = query, cfg
         self._out_schema = out_schema
         self._filter, self._filter_cols = filter_expr, filter_cols
@@ -95,7 +98,8 @@ class IcebergScanTask(DataSourceTask):
         def run():
             with self._io.new_input(self._path).open() as src:
                 return search_file(src, self._path, self._column, self._query, self._cfg,
-                                   self._out_schema, self._filter, self._filter_cols, self._deleted)
+                                   self._out_schema, self._filter, self._filter_cols, self._deleted,
+                                   index_ref=self._index_ref, index_io=self._io)
         # search_file is synchronous IO-heavy work; to_thread lets the local
         # runner's event loop interleave several files' tasks instead of
         # running each one to completion before the next
@@ -168,11 +172,13 @@ class IcebergFilesSource(DataSource):
         if pushdowns.limit is not None:      # not pushed through a Sort, but be safe
             cfg = dataclasses.replace(cfg, k=max(cfg.k, pushdowns.limit))
 
+        refs = index_refs(self._table, self._column)      # Puffin indexes, if any
         for task in planned:
             expr, cols = _arrow_filter(self._table, task.residual)
             deleted = _deleted_positions(self._table, task)
             yield IcebergScanTask(self._table.io, task.file.file_path, self._column,
-                                  self._query, cfg, out_schema, expr, cols, deleted)
+                                  self._query, cfg, out_schema, expr, cols, deleted,
+                                  index_ref=ref_for(refs, task.file))
 
 
 def read_ivf_iceberg(table: Table, column: str, query, k: int = 10, *,

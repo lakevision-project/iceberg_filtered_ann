@@ -36,7 +36,10 @@ A minimal correct version:
 1. mask   = rows of `file` matching `predicate`, minus `deleted_positions`
             (read only the predicate's columns)
 2. if the file has no index        -> score every masked row exactly, return top-k
-3. index  = read the footer KV pointer `ifs.vector.index.v1`, then one ranged read
+3. index  = the file's blob in a Puffin file (from the table's index registry;
+            use it only if the blob's referenced-data-file, size and row count
+            match this file), else the footer KV pointer `ifs.vector.index.v1`;
+            one ranged read either way
 4. probe the clusters nearest to `query_vector`, in order; from each posting
    list keep only rows in `mask`; stop after `nprobe` clusters that had matches
    AND at least ~16·k candidates
@@ -100,21 +103,33 @@ verify against the version you target.
 
 ## Writing
 
-Engines don't need to write indexes to search them. Any writer that can run
-`index_table` per file (or call `lakehouse_ann.write`) can produce indexed files,
-and `add_files` registers them without rewriting. Files rewritten later, for
-example by compaction, lose their index and fall back to exact search
-(rule 3). A periodic re-index of files without an index restores speed.
+Engines don't need to write indexes to search them. Tables written by any
+engine can be indexed in place: `python -m lakehouse_ann.write attach` builds
+an index per data file into Puffin files without touching the data. Files
+rewritten later, for example by compaction, simply have no matching index and
+fall back to exact search (rule 3). Re-running `attach` indexes only those files.
 
 ## What a community standard would need to agree on
 
 To make this portable across engines, only a few things need to be written down:
 
 * the **index blob layout** (IVF centroids + posting lists of row positions;
-  today `IFVI v1`, see `format.py`) and the **footer key** that points to it;
-* the **distance metric** (L2 today; cosine via normalized vectors);
-* optionally, a **table property** naming the indexed column(s), so engines know
-  an index may be present without opening files.
+  today `IFVI v1`, see `format.py`) as a **Puffin blob type**, plus the optional
+  byte-runs blob for ranged reads;
+* **how a reader finds a data file's index blob**. The natural place is the
+  manifest, the way v3 deletion vectors point at their Puffin blob
+  (`referenced_data_file`, `content_offset`, `content_size_in_bytes`).
+  Until then, this repository uses a table property listing the Puffin files
+  (see [design §1b](design.md#1b-where-the-index-lives-puffin-default-or-the-footer));
+* the **distance metric** (L2 today; cosine via normalized vectors).
+
+Puffin keeps data files untouched: an index can be added to an existing table,
+rebuilt, or dropped without rewriting data, and it isn't tied to Parquet. One
+practical detail for the proposal: some readers only accept the known
+*statistics* blob types (pyiceberg 0.12 rejects others when loading table
+metadata), which is why the index isn't registered as table statistics today.
+The footer embedding (`ifs.vector.index.v1`) remains an optional co-located
+alternative.
 
 Everything else (k-means, probing strategy, cost model, caching) can stay
 an implementation choice for each engine. Two engines with different search code

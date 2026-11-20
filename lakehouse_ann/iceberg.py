@@ -87,6 +87,9 @@ def vector_search(tbl: Table, column: str, query, k: int = 10, *,
     if not tasks:
         return pa.table({})
 
+    from .puffin import index_refs, ref_for
+    refs = index_refs(tbl, column)         # Puffin indexes, if any
+
     def one(task):
         path = task.file.file_path
         expr, cols = _arrow_filter(tbl, task.residual)
@@ -96,7 +99,8 @@ def vector_search(tbl: Table, column: str, query, k: int = 10, *,
             names = selected_fields or tuple(n for n in file_schema.names)
             keep = [file_schema.field(n) for n in file_schema.names if n in names]
             out_schema = pa.schema(keep + [pa.field(DISTANCE_COL, pa.float32())])
-            return search_file(src, path, column, query, cfg, out_schema, expr, cols, deleted)
+            return search_file(src, path, column, query, cfg, out_schema, expr, cols, deleted,
+                               index_ref=ref_for(refs, task.file), index_io=tbl.io)
 
     with ThreadPoolExecutor(max_workers) as ex:
         parts = [t for t in ex.map(one, tasks) if t.num_rows]

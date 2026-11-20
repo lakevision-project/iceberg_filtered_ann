@@ -2,7 +2,7 @@
 
 Find the *k* nearest neighbours of a query vector **among the rows that match a
 SQL predicate**, directly over an Apache Iceberg table of Parquet files on object
-storage. There's no vector database, no separate index files and no second copy of the data.
+storage. There's no vector database and no second copy of the data.
 
 ```sql
 SELECT id, title, _distance FROM docs
@@ -21,10 +21,14 @@ built on open engines: [pyiceberg](https://py.iceberg.apache.org/),
 
 ## The idea in five points
 
-1. **An IVF index inside every Parquet file.** The index sits between the data pages and
-   the footer, with pointers in the footer's key-value metadata. Any Parquet reader
-   (Spark, Trino, DuckDB, pandas, …) reads the file normally and never sees the
-   index. An index-aware reader fetches it with one ranged read.
+1. **A small IVF index for every data file.** By default it is stored in an
+   Iceberg [Puffin](https://iceberg.apache.org/puffin-spec/) file next to the
+   data, one blob per data file (the same pattern v3 deletion vectors use). The
+   data files stay untouched plain Parquet, so an index can be **attached to an
+   existing table written by any engine** without rewriting data. Optionally, the index can
+   instead be spliced into each Parquet file, outside its footer. Either way an
+   index-aware reader fetches it with one ranged read, and every other reader
+   ignores it.
 2. **Iceberg prunes first.** Partition and column-statistics pruning drop whole
    files before any vector is touched. As the paper puts it, the payoff comes
    from file pruning.
@@ -98,10 +102,18 @@ python -m lakehouse_ann.write index --catalog prod --dest vec.docs \
 ```
 
 `index` builds a k-means index per output file, sorts rows by cluster (optional;
-`--no-cluster-sort` keeps the input order), splices
-the index into the footer, uploads, and registers everything with one Iceberg
-`add_files` commit. Every output file holds a single partition value. It can also
-re-index an existing table (`--from-table`) and is safe to re-run. The same API
+`--no-cluster-sort` keeps the input order), uploads, writes the indexes to Puffin
+files (or into each data file with `--index-location footer`), and registers
+everything in one Iceberg commit. Every output file holds a single partition value.
+It can re-index an existing table into a new one (`--from-table`) and is safe to re-run.
+
+Already have a table? Index it **in place**, without rewriting any data file:
+
+```bash
+python -m lakehouse_ann.write attach --catalog prod --table vec.docs --column embedding [--ray]
+```
+
+The same API
 is available from Python (`lakehouse_ann.write.write_indexed_table`,
 `lakehouse_ann.embed.embed_text`). See [docs/writing.md](docs/writing.md) and
 `examples/write_local.sh` / `examples/write_ray.sh`.
@@ -116,6 +128,7 @@ Recall@10 is measured against exact search. Full setups, caveats and more cases 
 | 1M × 128 synthetic, local, no pruning possible | unfiltered | brute force 522 MB read | **52 MB**, recall 1.00 | 10× less I/O |
 | same | `tier` = 1% of rows | post-filter returns **0.1 of 10** rows | 10 rows, recall 0.83 | filter during ranking |
 | same, partitioned by the filter column | correlated filter | 0.50 recall, 16 files | **0.97 recall, 1 file**, 6 ms | Iceberg pruning |
+| 1M, index location | sorted rows, unfiltered | footer: 52 MB, 187 req | **Puffin: 52 MB, 187 req** | same cost, no data rewrite to (re)index |
 | 5M × 384 Granite, IBM COS, laptop | `category = 'tech'` | 77 s, 1.5 GB | **12.6 s, 190 MB** | 6.1× |
 | 5M, in-cluster, native → Ray (5 workers) | scalar filter, all files | 35.4 s | **8.4 s**, identical top-k | 4.2× |
 | 50M × 384, Ray (5 workers × 8 vCPU) | unfiltered (250 files) | 83.1 s | **24.9 s**, recall 1.00 | 3.3× |
@@ -149,7 +162,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[test]"          # core; add ,ray and/or ,embed for those modes
 python bench/make_data.py --out data          # synthetic 1M x 128, ~1 min
 python bench/iceberg_demo.py                  # local SQLite catalog + the pyiceberg demo
-pytest -q                                     # 37 tests, no network (data-dependent ones skip without the two steps above)
+pytest -q                                     # 44 tests, no network (data-dependent ones skip without the two steps above)
 python examples/01_pyiceberg.py               # ... 02_daft, 03_sql, 04_ray
 examples/write_local.sh                       # embed -> index -> register -> query
 ```
@@ -161,13 +174,14 @@ Kubernetes, see [deploy/kubernetes](deploy/kubernetes/README.md).
 ## Repository layout
 
 ```
-lakehouse_ann/   format.py  footer.py   IFVI/IFVR index blobs and how they sit in a Parquet file
+lakehouse_ann/   format.py              IFVI/IFVR index blobs
+                 puffin.py  footer.py   where they live: Puffin files (default) or the Parquet footer
                  build.py               k-means, cluster-sort, write one indexed file
                  search.py              per-file kernel: filter → plan → fetch → score → project
                  iceberg.py             (i)   pyiceberg-only vector_search
                  source.py              (ii)  Daft DataSource over a glob of indexed files
                  iceberg_sql.py         (ii)/(iii)/(iv)  Daft DataSource planned by pyiceberg, ann_sql
-                 embed.py  write.py     write path: embed, index, register (local or Ray)
+                 embed.py  write.py     write path: embed, index, register, attach (local or Ray)
 examples/        one script per query mode, write-path scripts, remote catalog
 bench/           synthetic data, local benchmarks, SQL demo, Ray benchmark, results/*.json
 deploy/          Ray on Kubernetes: manifest, deploy script, Dockerfile

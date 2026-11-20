@@ -105,13 +105,63 @@ def index_table(table: pa.Table, out_path: str, column: str, n_clusters: int,
     vecs = embedding_matrix(table.column(column))
     blob = build_blob(vecs, n_clusters, seed=seed)
     if cluster_rows:
-        perm = blob.postings.astype(np.int64)        # rows grouped by cluster
-        table = table.take(pa.array(perm))
-        vecs = vecs[perm]
-        blob.postings = np.arange(len(perm), dtype=np.uint64)
+        table, vecs = _sorted_by_cluster(table, vecs, blob)
     return write_indexed_parquet(table, out_path, column, blob, vecs,
                                  row_group_size=row_group_size,
                                  compress_embedding=compress_embedding)
+
+
+def _sorted_by_cluster(table: pa.Table, vecs: np.ndarray, blob: IndexBlob):
+    perm = blob.postings.astype(np.int64)            # rows grouped by cluster
+    blob.postings = np.arange(len(perm), dtype=np.uint64)
+    return table.take(pa.array(perm)), vecs[perm]
+
+
+def index_table_external(table: pa.Table, out_path: str, column: str, n_clusters: int,
+                         *, row_group_size: int = 8192, seed: int = 42, cluster_rows: bool = True,
+                         compress_embedding: bool = False) -> tuple[int, bytes, bytes | None]:
+    """Like index_table, but the index is NOT spliced into the file: write the
+    data file as plain Parquet and return (bytes written, IFVI bytes, IFVR bytes
+    or None) for storing elsewhere, e.g. in a Puffin file (see puffin.py)."""
+    from .footer import _write, locate_value_runs, resolve, writer_options
+    from .format import serialize, serialize_runs
+    vecs = embedding_matrix(table.column(column))
+    blob = build_blob(vecs, n_clusters, seed=seed)
+    if cluster_rows:
+        table, vecs = _sorted_by_cluster(table, vecs, blob)
+    raw = _write(table, writer_options(table, column, row_group_size,
+                                       compress_embedding=compress_embedding))
+    runs = locate_value_runs(raw, vecs, column)
+    fs, path = resolve(out_path)
+    with fs.open_output_stream(path) as f:
+        f.write(raw)
+    return len(raw), serialize(blob), (serialize_runs(runs) if runs is not None else None)
+
+
+def index_existing_file(io, path: str, column: str, n_clusters: int, *, seed: int = 42,
+                        ranged_runs: bool = True) -> tuple[bytes, bytes | None, int]:
+    """Build an index for a data file that is NOT rewritten (rows stay in their
+    order). Reads only the embedding column, plus, when that column is
+    PLAIN + uncompressed and `ranged_runs`, the whole file once, to record IFVR
+    byte runs for ranged vector reads. Returns (IFVI bytes, IFVR bytes or
+    None, row count)."""
+    import pyarrow.parquet as pq
+    from .footer import _leaf_index, locate_value_runs
+    from .format import serialize, serialize_runs
+    with io.new_input(path).open() as f:
+        pf = pq.ParquetFile(f)
+        md = pf.metadata
+        vecs = embedding_matrix(pf.read(columns=[column]).column(column))
+        j = _leaf_index(md, column)
+        plain = all(md.row_group(g).column(j).compression == "UNCOMPRESSED"
+                    and "PLAIN" in md.row_group(g).column(j).encodings
+                    for g in range(md.num_row_groups))
+        runs = None
+        if ranged_runs and plain and md.num_row_groups:
+            f.seek(0)
+            runs = locate_value_runs(f.read(), vecs, column)
+    blob = build_blob(vecs, n_clusters, seed=seed)    # postings in the file's row order
+    return serialize(blob), (serialize_runs(runs) if runs is not None else None), len(vecs)
 
 
 def main(argv=None):

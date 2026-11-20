@@ -1,0 +1,210 @@
+{
+ "rows": [
+  {
+   "filter": "none",
+   "table": "footer-sorted",
+   "recall": 1.0,
+   "mb": 52.000335099999994,
+   "requests": 186.7,
+   "index_mb": 6.097343999999998,
+   "ms": 55.80900001223199,
+   "plans": {
+    "ivf": 16.000000000000092
+   }
+  },
+  {
+   "filter": "none",
+   "table": "footer-unsorted",
+   "recall": 1.0,
+   "mb": 533.8603439999999,
+   "requests": 178.9,
+   "index_mb": 6.097343999999998,
+   "ms": 121.18202049168758,
+   "plans": {
+    "ivf": 16.000000000000092
+   }
+  },
+  {
+   "filter": "none",
+   "table": "puffin-attach",
+   "recall": 1.0,
+   "mb": 603.41087115,
+   "requests": 252.7,
+   "index_mb": 6.089088000000001,
+   "ms": 121.90206252853386,
+   "plans": {
+    "ivf": 16.000000000000092
+   }
+  },
+  {
+   "filter": "none",
+   "table": "puffin-attach-plain",
+   "recall": 1.0,
+   "mb": 533.8666082999999,
+   "requests": 178.95,
+   "index_mb": 6.097343999999998,
+   "ms": 120.10862500756048,
+   "plans": {
+    "ivf": 16.000000000000092
+   }
+  },
+  {
+   "filter": "none",
+   "table": "puffin-sorted",
+   "recall": 1.0,
+   "mb": 52.000335099999994,
+   "requests": 186.7,
+   "index_mb": 6.097343999999998,
+   "ms": 63.78058303380385,
+   "plans": {
+    "ivf": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p10'",
+   "table": "footer-sorted",
+   "recall": 1.0,
+   "mb": 51.30607115,
+   "requests": 357.25,
+   "index_mb": 6.097343999999998,
+   "ms": 53.76014549983665,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p10'",
+   "table": "footer-unsorted",
+   "recall": 1.0,
+   "mb": 535.1641249999999,
+   "requests": 299.0,
+   "index_mb": 6.097343999999998,
+   "ms": 134.31081298040226,
+   "plans": {
+    "exact:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p10'",
+   "table": "puffin-attach",
+   "recall": 1.0,
+   "mb": 603.77647425,
+   "requests": 380.0,
+   "index_mb": 6.089088000000001,
+   "ms": 144.19300001463853,
+   "plans": {
+    "exact:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p10'",
+   "table": "puffin-attach-plain",
+   "recall": 1.0,
+   "mb": 535.177145,
+   "requests": 299.0,
+   "index_mb": 6.097343999999998,
+   "ms": 132.0646459935233,
+   "plans": {
+    "exact:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p10'",
+   "table": "puffin-sorted",
+   "recall": 1.0,
+   "mb": 51.30607115,
+   "requests": 357.25,
+   "index_mb": 6.097343999999998,
+   "ms": 51.579479448264465,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p1'",
+   "table": "footer-sorted",
+   "recall": 0.875,
+   "mb": 92.70775185,
+   "requests": 729.7,
+   "index_mb": 6.097343999999998,
+   "ms": 71.57439598813653,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p1'",
+   "table": "footer-unsorted",
+   "recall": 0.875,
+   "mb": 82.77184704999999,
+   "requests": 1633.7,
+   "index_mb": 6.097343999999998,
+   "ms": 104.77687502861954,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p1'",
+   "table": "puffin-attach",
+   "recall": 1.0,
+   "mb": 603.8802654,
+   "requests": 382.0,
+   "index_mb": 6.089088000000001,
+   "ms": 129.4745830236934,
+   "plans": {
+    "exact:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p1'",
+   "table": "puffin-attach-plain",
+   "recall": 0.875,
+   "mb": 82.77321064999998,
+   "requests": 1633.7,
+   "index_mb": 6.097343999999998,
+   "ms": 103.80487548536621,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  },
+  {
+   "filter": "tier = 'p1'",
+   "table": "puffin-sorted",
+   "recall": 0.875,
+   "mb": 92.70775185,
+   "requests": 729.7,
+   "index_mb": 6.097343999999998,
+   "ms": 70.94270849484019,
+   "plans": {
+    "ivf:filtered": 16.000000000000092
+   }
+  }
+ ],
+ "attach_s": 13.164396958018187,
+ "registry_ms": {
+  "footer-sorted": [
+   0.009833020158112049,
+   0
+  ],
+  "footer-unsorted": [
+   0.0021249870769679546,
+   0
+  ],
+  "puffin-attach": [
+   1.7498329980298877,
+   16
+  ],
+  "puffin-attach-plain": [
+   0.40329102193936706,
+   16
+  ],
+  "puffin-sorted": [
+   0.15154201537370682,
+   16
+  ]
+ },
+ "queries": 20,
+ "k": 10,
+ "nprobe": 8
+}

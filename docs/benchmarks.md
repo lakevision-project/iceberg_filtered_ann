@@ -1,6 +1,6 @@
 # Benchmarks
 
-Six experiments, from a laptop to a 50M-row table on a Ray cluster. Unless noted:
+Seven experiments, from a laptop to a 50M-row table on a Ray cluster. Unless noted:
 k = 10, L2 distance, and recall@10 against **exact** search over the same rows and
 the same filter. Raw results are in `bench/results/`.
 
@@ -205,6 +205,35 @@ start), so medians are reported.
 **Caveats.** Three query vectors per case is a small sample, and object-storage
 latency varies from run to run. Under Ray, per-file I/O counters stay on the
 workers, so §5–§6 report time and recall rather than bytes.
+
+## 7. Where the index lives: footer vs Puffin
+
+`python bench/puffin_bench.py` (same 1M rows as §1, 16 files, 250 clusters per
+file, nprobe 8, 20 queries). Bytes and requests include every read of the
+data file plus, for Puffin, the index-blob reads.
+
+| index | rows rewritten? | `none`: recall / MB / reqs | `tier = 'p10'`: recall / MB / reqs | `tier = 'p1'`: recall / MB / reqs |
+|---|---|---|---|---|
+| footer, rows sorted | yes | 1.00 / 52 / 187 | 1.00 / 51 / 357 | 0.88 / 93 / 730 |
+| **Puffin, rows sorted** | yes | 1.00 / 52 / 187 | 1.00 / 51 / 357 | 0.88 / 93 / 730 |
+| footer, original order | yes | 1.00 / 534 / 179 | 1.00 / 535 / 299 | 0.88 / 83 / 1634 |
+| Puffin attached, original order, uncompressed | no | 1.00 / 534 / 179 | 1.00 / 535 / 299 | 0.88 / 83 / 1634 |
+| Puffin attached, original order, snappy (typical existing table) | no | 1.00 / 603 / 253 | 1.00 / 604 / 380 | 1.00 / 604 / 382 |
+
+* **The index location costs nothing.** Puffin with sorted rows reads exactly
+  what the footer layout reads (52 MB, 187 requests unfiltered), and the same
+  holds for unsorted files (534 MB either way). The Puffin footers are read once
+  per query and cached: 0.2–2 ms for 16 files.
+* **Attaching needs no rewrite.** Indexing the 16 existing files in place took
+  13 s on a laptop and touched no data file. Results are correct (recall 1.00
+  unfiltered).
+* **Sorting is still what saves I/O.** Unsorted files read about as much as
+  brute force, whichever place holds the index. On the typical existing
+  table (snappy-compressed embeddings), vectors come in whole compressed row
+  groups, so the planner picks exact scans for filtered queries. That is why
+  recall there is 1.00 at 1%.
+  Attaching makes a table searchable today; a sorted rewrite
+  (`index --from-table`) can follow where I/O matters.
 
 ---
 

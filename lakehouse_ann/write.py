@@ -85,6 +85,7 @@ class IndexOptions:
     row_group_size: int = 512
     compress_embedding: bool = True
     cluster_sort: bool = True          # optional; a large I/O win, not needed for correctness
+    index_location: str = "puffin"     # "puffin" (next to the data) or "footer" (inside it)
     min_rows_per_cluster: int = 64     # small files/partitions get fewer clusters
     max_rows_per_file: int = 500_000   # larger inputs are split into several indexed files
 
@@ -116,13 +117,25 @@ def _partition_path(fields, values) -> str:
     return "/".join(f"{f.name}={v}" for f, v in zip(fields, values))
 
 
+def _upload(local, dest_io, dest):
+    with open(local, "rb") as fh, dest_io.new_output(dest).create(overwrite=True) as o:
+        while chunk := fh.read(64 << 20):
+            o.write(chunk)
+
+
 def index_one(src_path: str, src_io, dest_io, dest_prefix: str, fields: list[PartitionField],
-              opts: IndexOptions) -> list[dict]:
-    """Steps 1-5 for one input file. Returns one record per output file."""
-    from .build import index_table
+              opts: IndexOptions, indexed: frozenset = frozenset()) -> list[dict]:
+    """Steps 1-5 for one input file. Returns one record per output file.
+
+    With opts.index_location == "puffin", records carry the index bytes
+    (`ivf`, `runs`) for the driver to collect into a Puffin file; with
+    "footer", the index is spliced into the data file itself. `indexed` holds
+    destination paths that already have a valid Puffin index (resume)."""
+    from .build import index_existing_file, index_table, index_table_external
     from .footer import read_index, read_runs
     from .format import POINTER_KEY
 
+    puffin = opts.index_location == "puffin"
     t0 = time.perf_counter()
     with src_io.new_input(src_path).open() as f:
         table = pq.ParquetFile(f).read()
@@ -143,27 +156,46 @@ def index_one(src_path: str, src_io, dest_io, dest_prefix: str, fields: list[Par
         dest = f"{dest_prefix}/data/{sub + '/' if sub else ''}{stem}{tag}-ivf.parquet"
         rec = {"src": src_path, "dest": dest, "rows": part.num_rows, "partition": values,
                "read_s": t_read}
-        try:                                         # resume: already uploaded and indexed
+        k = max(1, min(opts.n_clusters, part.num_rows // opts.min_rows_per_cluster))
+        try:                                         # resume: already uploaded
             with dest_io.new_input(dest).open() as f:
+                size = f.size()
                 md = pq.ParquetFile(f).metadata
-            if md.num_rows == part.num_rows and POINTER_KEY.encode() in (md.metadata or {}):
-                out.append({**rec, "skipped": True})
-                continue
+            if md.num_rows == part.num_rows:
+                if not puffin and POINTER_KEY.encode() in (md.metadata or {}):
+                    out.append({**rec, "skipped": True})
+                    continue
+                if puffin and dest in indexed:
+                    out.append({**rec, "skipped": True})
+                    continue
+                if puffin:                           # uploaded, index lost: rebuild it in place
+                    ivf, runs, _ = index_existing_file(dest_io, dest, opts.column, k)
+                    out.append({**rec, "skipped": True, "ivf": ivf, "runs": runs, "size": size})
+                    continue
         except (OSError, FileNotFoundError):
             pass
-        k = max(1, min(opts.n_clusters, part.num_rows // opts.min_rows_per_cluster))
         with tempfile.TemporaryDirectory(prefix="ivf-") as d:
             local = os.path.join(d, "out.parquet")
             t0 = time.perf_counter()
-            index_table(part, local, opts.column, k, row_group_size=opts.row_group_size,
-                        compress_embedding=opts.compress_embedding,
-                        cluster_rows=opts.cluster_sort)
+            if puffin:
+                _, ivf, runs = index_table_external(
+                    part, local, opts.column, k, row_group_size=opts.row_group_size,
+                    compress_embedding=opts.compress_embedding, cluster_rows=opts.cluster_sort)
+                from .format import parse
+                blob = parse(ivf)
+                md = pq.read_metadata(local)
+                assert POINTER_KEY.encode() not in (md.metadata or {})
+                rec.update(ivf=ivf, runs=runs)
+            else:
+                index_table(part, local, opts.column, k, row_group_size=opts.row_group_size,
+                            compress_embedding=opts.compress_embedding,
+                            cluster_rows=opts.cluster_sort)
+                md = pq.read_metadata(local)
+                with open(local, "rb") as fh:
+                    pf_src = pa.PythonFile(fh, mode="r")
+                    blob = read_index(pf_src, md)
+                    runs = read_runs(pf_src, md)
             rec["index_s"] = time.perf_counter() - t0
-            md = pq.read_metadata(local)
-            with open(local, "rb") as fh:
-                pf_src = pa.PythonFile(fh, mode="r")
-                blob = read_index(pf_src, md)
-                runs = read_runs(pf_src, md)
             assert md.num_rows == part.num_rows and blob.n_rows == part.num_rows
             assert blob.n_clusters == k
             assert (runs is None) == opts.compress_embedding
@@ -172,13 +204,70 @@ def index_one(src_path: str, src_io, dest_io, dest_prefix: str, fields: list[Par
                 st = md.row_group(0).column(names.index(f.column)).statistics
                 assert st is not None and st.has_min_max, f"no statistics on {f.column}"
             t0 = time.perf_counter()
-            with open(local, "rb") as fh, dest_io.new_output(dest).create(overwrite=True) as o:
-                while chunk := fh.read(64 << 20):
-                    o.write(chunk)
-            rec.update(upload_s=time.perf_counter() - t0, clusters=k,
+            _upload(local, dest_io, dest)
+            rec.update(upload_s=time.perf_counter() - t0, clusters=k, size=os.path.getsize(local),
                        row_groups=md.num_row_groups, mb=os.path.getsize(local) / 1e6)
         out.append(rec)
     return out
+
+
+def attach_one(io, path: str, size: int, rows: int, column: str, n_clusters: int,
+               min_rows_per_cluster: int = 64, ranged_runs: bool = True) -> dict | None:
+    """Index one existing data file in place (no rewrite). None if the file
+    already carries a footer index or its embedding column has nulls."""
+    from .build import index_existing_file
+    from .format import POINTER_KEY
+    t0 = time.perf_counter()
+    with io.new_input(path).open() as f:
+        md = pq.ParquetFile(f).metadata
+    if POINTER_KEY.encode() in (md.metadata or {}):
+        return {"data_file": path, "skipped": "footer index"}
+    k = max(1, min(n_clusters, rows // min_rows_per_cluster))
+    try:
+        ivf, runs, n = index_existing_file(io, path, column, k, ranged_runs=ranged_runs)
+    except ValueError as e:                          # e.g. nulls in the embedding column
+        return {"data_file": path, "skipped": str(e)[:80]}
+    assert n == rows, (path, n, rows)
+    return {"data_file": path, "size": size, "rows": rows, "ivf": ivf, "runs": runs,
+            "clusters": k, "index_s": time.perf_counter() - t0}
+
+
+def _write_puffins(tbl, column: str, entries: list[dict], max_bytes: int = 256 << 20) -> list[str]:
+    """Write `entries` (data_file, size, rows, ivf, runs) to Puffin file(s) under
+    the table's metadata/ directory; returns their paths."""
+    import uuid
+    from .puffin import write_puffin
+    if not entries:
+        return []
+    field_id = tbl.schema().find_field(column).field_id
+    snap = tbl.metadata.current_snapshot_id
+    seq = tbl.metadata.last_sequence_number or 0
+    groups, cur, n = [], [], 0
+    for e in entries:
+        sz = len(e["ivf"]) + len(e.get("runs") or b"")
+        if cur and n + sz > max_bytes:
+            groups.append(cur)
+            cur, n = [], 0
+        cur.append(e)
+        n += sz
+    groups.append(cur)
+    paths = []
+    loc = tbl.metadata.location.rstrip("/")
+    for g in groups:
+        path = f"{loc}/metadata/ann-index-{column}-{uuid.uuid4()}.puffin"
+        write_puffin(tbl.io, path, g, field_id=field_id,
+                     snapshot_id=snap if snap is not None else -1, sequence_number=seq)
+        paths.append(path)
+    return paths
+
+
+def _quiet_stats_warnings():
+    import logging
+    lg = logging.getLogger("pyiceberg.io.pyarrow")
+    quiet = logging.Filter()
+    quiet.filter = lambda r: "statistics missing" not in r.getMessage()
+    lg.addFilter(quiet)
+    return lambda: lg.removeFilter(quiet)
 
 
 def _expand(source, io) -> list[str]:
@@ -244,6 +333,7 @@ def _ensure_table(catalog, identifier, schema: pa.Schema, fields, properties):
 def write_indexed_table(catalog, identifier: str, source, column: str, *,
                         partition_by=(), n_clusters: int = 256, row_group_size: int = 512,
                         compress_embedding: bool = True, cluster_sort: bool = True,
+                        index_location: str = "puffin",
                         max_rows_per_file: int = 500_000,
                         runner: str = "local",
                         max_workers: int = 4, ray_address: str | None = None,
@@ -260,12 +350,16 @@ def write_indexed_table(catalog, identifier: str, source, column: str, *,
     cluster_sort: sort each file's rows by IVF cluster (default). Optional:
             unsorted files search correctly with the same recall; sorting is a
             performance optimization (contiguous probe reads).
+    index_location: "puffin" (default) stores each file's index in Puffin
+            file(s) under metadata/, registered in a table property; "footer"
+            splices it into the data file (see docs/design.md).
     """
     from pyiceberg.table import Table
 
     fields = [PartitionField.parse(s) for s in partition_by]
     opts = IndexOptions(column=column, n_clusters=n_clusters, row_group_size=row_group_size,
                         compress_embedding=compress_embedding, cluster_sort=cluster_sort,
+                        index_location=index_location,
                         max_rows_per_file=max_rows_per_file)
     if isinstance(source, Table):
         src_io = source.io
@@ -291,6 +385,8 @@ def write_indexed_table(catalog, identifier: str, source, column: str, *,
         f"{len(inputs)} input file(s), runner={runner}")
     prefix = dest.metadata.location.rstrip("/")
     t_all = time.perf_counter()
+    from .puffin import index_refs, register
+    indexed = frozenset(index_refs(dest, column)) if index_location == "puffin" else frozenset()
 
     done = []
     def report(recs):
@@ -307,33 +403,84 @@ def write_indexed_table(catalog, identifier: str, source, column: str, *,
             ray.init(address=ray_address)
         task = ray.remote(num_cpus=ray_cpus_per_task, memory=int(ray_memory_gb * 1024**3),
                           max_retries=2)(index_one)
-        pending = [task.remote(p, src_io, dest.io, prefix, fields, opts) for p in inputs]
+        pending = [task.remote(p, src_io, dest.io, prefix, fields, opts, indexed) for p in inputs]
         while pending:
             ready, pending = ray.wait(pending, num_returns=1)
             report(ray.get(ready[0]))
     elif runner == "local":
         with ThreadPoolExecutor(max_workers) as ex:
-            for recs in ex.map(lambda p: index_one(p, src_io, dest.io, prefix, fields, opts), inputs):
+            for recs in ex.map(lambda p: index_one(p, src_io, dest.io, prefix, fields, opts, indexed),
+                               inputs):
                 report(recs)
     else:
         raise ValueError(f"runner must be 'local' or 'ray', not {runner!r}")
 
     registered = {t.file.file_path for t in dest.scan().plan_files()}
     fresh = [r["dest"] for r in done if r["dest"] not in registered]
-    if fresh:
-        import logging                    # the embedding column has no stats, by design
-        lg = logging.getLogger("pyiceberg.io.pyarrow")
-        quiet = logging.Filter(); quiet.filter = lambda r: "statistics missing" not in r.getMessage()
-        lg.addFilter(quiet)
+    # Puffin files first (not yet visible), then ONE commit that adds the data
+    # files and registers their indexes, so readers never see one without the other
+    entries = [{"data_file": r["dest"], "size": r["size"], "rows": r["rows"],
+                "ivf": r["ivf"], "runs": r.get("runs")} for r in done if r.get("ivf")]
+    puffins = _write_puffins(dest, column, entries)
+    if fresh or puffins:
+        restore = _quiet_stats_warnings()
         try:
-            dest.add_files(fresh)
+            with dest.transaction() as tx:
+                if fresh:
+                    tx.add_files(fresh)
+                if puffins:
+                    register(dest, column, puffins, tx)
         finally:
-            lg.removeFilter(quiet)
+            restore()
     dest = catalog.load_table(identifier)
     n_rows = sum(t.file.record_count for t in dest.scan().plan_files())
-    log(f"{identifier}: +{len(fresh)} file(s) registered; {n_rows:,} rows @ snapshot "
+    log(f"{identifier}: +{len(fresh)} file(s) registered, {len(entries)} index(es) in "
+        f"{len(puffins)} Puffin file(s); {n_rows:,} rows @ snapshot "
         f"{dest.metadata.current_snapshot_id} ({time.perf_counter() - t_all:.0f}s)")
     return dest
+
+
+def attach_indexes(table, column: str, *, n_clusters: int = 256, runner: str = "local",
+                   max_workers: int = 4, ray_address: str | None = None,
+                   ray_cpus_per_task: float = 2, ray_memory_gb: float = 4,
+                   ranged_runs: bool = True, log=print):
+    """Index an EXISTING table in place: for every data file of the current
+    snapshot that has no valid index yet, build one and store it in Puffin
+    file(s). No data file is rewritten; works on tables written by any engine.
+    Re-running only indexes files added (or rewritten by compaction) since."""
+    from .puffin import index_refs, ref_for, register
+    refs = index_refs(table, column)
+    files = [t.file for t in table.scan().plan_files()]
+    todo = [f for f in files if ref_for(refs, f) is None]
+    log(f"{'.'.join(table.name()) if not isinstance(table.name(), str) else table.name()}: "
+        f"{len(files)} data files, {len(files) - len(todo)} already indexed in Puffin, "
+        f"{len(todo)} to index (runner={runner})")
+    t_all = time.perf_counter()
+    args = [(f.file_path, f.file_size_in_bytes, f.record_count) for f in todo]
+    if runner == "ray":
+        import ray
+        if not ray.is_initialized():
+            ray.init(address=ray_address)
+        task = ray.remote(num_cpus=ray_cpus_per_task, memory=int(ray_memory_gb * 1024**3),
+                          max_retries=2)(attach_one)
+        results = ray.get([task.remote(table.io, p, sz, n, column, n_clusters, 64, ranged_runs)
+                           for p, sz, n in args])
+    elif runner == "local":
+        with ThreadPoolExecutor(max_workers) as ex:
+            results = list(ex.map(lambda a: attach_one(table.io, *a, column, n_clusters, 64,
+                                                       ranged_runs), args))
+    else:
+        raise ValueError(f"runner must be 'local' or 'ray', not {runner!r}")
+    entries = [r for r in results if r and "ivf" in r]
+    skipped = [r for r in results if r and "skipped" in r]
+    puffins = _write_puffins(table, column, entries)
+    if puffins:
+        with table.transaction() as tx:
+            register(table, column, puffins, tx)
+    log(f"  indexed {len(entries)} file(s) ({sum(1 for e in entries if e.get('runs'))} with ranged "
+        f"reads), skipped {len(skipped)}, {len(puffins)} Puffin file(s), "
+        f"{time.perf_counter() - t_all:.0f}s")
+    return entries, skipped
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -381,12 +528,23 @@ def main(argv=None):
     i.add_argument("--row-group-size", type=int, default=512)
     i.add_argument("--no-compress-embedding", action="store_true",
                    help="write the embedding PLAIN+uncompressed (adds IFVR byte runs)")
+    i.add_argument("--index-location", choices=("puffin", "footer"), default="puffin",
+                   help="store indexes in Puffin files (default) or inside each data file")
     i.add_argument("--no-cluster-sort", action="store_true",
                    help="keep the input row order (correct, but probes read more bytes)")
     i.add_argument("--max-rows-per-file", type=int, default=500_000)
     i.add_argument("--workers", type=int, default=4, help="threads for the local runner")
     i.add_argument("--ray", nargs="?", const="", default=None, metavar="ADDRESS",
                    help="one Ray task per input file (local cluster if no address)")
+    t = sub.add_parser("attach", help="index an existing table in place (no data rewrite)")
+    t.add_argument("--table", required=True)
+    t.add_argument("--catalog", default="default")
+    t.add_argument("--column", default="embedding")
+    t.add_argument("--n-clusters", type=int, default=256)
+    t.add_argument("--no-ranged-runs", action="store_true",
+                   help="skip locating byte runs (avoids reading whole uncompressed files)")
+    t.add_argument("--workers", type=int, default=4)
+    t.add_argument("--ray", nargs="?", const="", default=None, metavar="ADDRESS")
     a = ap.parse_args(argv)
 
     if a.cmd == "embed":
@@ -400,6 +558,15 @@ def main(argv=None):
 
     from pyiceberg.catalog import load_catalog
     cat = load_catalog(a.catalog)
+    if a.cmd == "attach":
+        runner = "local"
+        if a.ray is not None:
+            import ray
+            ray.init(address=a.ray or None)
+            runner = "ray"
+        attach_indexes(cat.load_table(a.table), a.column, n_clusters=a.n_clusters, runner=runner,
+                       max_workers=a.workers, ranged_runs=not a.no_ranged_runs)
+        return
     source = cat.load_table(a.from_table) if a.from_table else a.input
     runner = "local"
     if a.ray is not None:
@@ -409,7 +576,7 @@ def main(argv=None):
     write_indexed_table(cat, a.dest, source, a.column, partition_by=a.partition_by,
                         n_clusters=a.n_clusters, row_group_size=a.row_group_size,
                         compress_embedding=not a.no_compress_embedding,
-                        cluster_sort=not a.no_cluster_sort,
+                        cluster_sort=not a.no_cluster_sort, index_location=a.index_location,
                         max_rows_per_file=a.max_rows_per_file, runner=runner,
                         max_workers=a.workers)
 

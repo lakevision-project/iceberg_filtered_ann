@@ -85,6 +85,8 @@ class FileStats:
     vector_requests: int = 0
     filter_bytes: int = 0          # compressed size of the filter column chunks read
     index_bytes: int = 0           # IFVI + IFVR blobs
+    index_source: str = ""         # "puffin", "footer" or "" (no index)
+    index_requests: int = 0        # reads made to fetch the index blobs
     io_bytes: int | None = None    # with trace_io: every byte the task read
     io_requests: int | None = None
     ms: float = 0.0
@@ -423,13 +425,17 @@ class _CountingReader:
 
 def search_file(src, path: str, column: str, query: np.ndarray, cfg: SearchConfig,
                 out_schema: pa.Schema, filter_expr=None, filter_cols=(),
-                deleted: np.ndarray | None = None) -> pa.Table:
+                deleted: np.ndarray | None = None, index_ref=None, index_io=None) -> pa.Table:
     """Top-k rows of one file, as a table shaped like `out_schema` (which may
     include the embedding column and must end with `_distance`).
 
     `deleted` holds file positions removed by Iceberg positional deletes or
     deletion vectors. They are the same ordinals the index stores, so they
-    simply join the filter mask: a deleted row is never a candidate."""
+    simply join the filter mask: a deleted row is never a candidate.
+
+    `index_ref` (a puffin.IndexRef, already validated against this data file)
+    points at the file's index in a Puffin file, read through `index_io`.
+    Without it, the index comes from the data file's own footer, if any."""
     t0 = time.perf_counter()
     counter = None
     if cfg.trace_io:
@@ -459,11 +465,21 @@ def search_file(src, path: str, column: str, query: np.ndarray, cfg: SearchConfi
             if st.n_match == md.num_rows:
                 mask = None          # every row qualifies: the filter is a no-op here
 
-        blob = read_index(src, md)
+        if index_ref is not None:
+            from .puffin import read_index_blobs
+            blob, runs, st.index_bytes, st.index_requests = read_index_blobs(index_io, index_ref)
+            st.index_source = "puffin"
+        else:
+            blob = read_index(src, md)
+            runs = read_runs(src, md) if blob is not None else None
+            st.index_bytes = blob_bytes(md)
+            if blob is not None:
+                st.index_source = "footer"
+                st.index_requests = 1 + (runs is not None)
         if blob is not None and blob.dim != query.shape[0]:
             raise ValueError(f"{path}: index dim {blob.dim} != query dim {query.shape[0]}")
-        runs = read_runs(src, md)
-        st.index_bytes = blob_bytes(md)
+        if blob is not None and blob.n_rows != md.num_rows:
+            blob = runs = None       # index built for different contents: search exactly
         vb = query.shape[0] * 4
         if mask is None:
             if blob is None:

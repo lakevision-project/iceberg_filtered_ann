@@ -37,11 +37,54 @@ Row ordinals in the index are positions within the file. Iceberg positional
 deletes and deletion vectors use the same ordinals, so deleted rows simply
 join the filter mask.
 
+## 1b. Where the index lives: Puffin (default) or the footer
+
+The same IFVI blob can be stored in two places. The search is identical; only
+the source of the index bytes differs.
+
+* **Puffin, the default** (`lakehouse_ann/puffin.py`). Indexes go into
+  [Puffin](https://iceberg.apache.org/puffin-spec/) files under the table's
+  `metadata/` directory. Puffin is Iceberg's container for statistics and
+  indexes, and v3 deletion vectors use it the same way: one blob per data file.
+  Each indexed file gets a `lakehouse-ann-ivf-v1` blob (the IFVI bytes) and,
+  when ranged reads are possible, a `lakehouse-ann-ivf-runs-v1` blob (IFVR).
+  Blob properties name the data file: `referenced-data-file`,
+  `data-file-size-in-bytes`, `record-count`, `metric`. Data files stay
+  untouched plain Parquet, so an index can be **attached to an existing
+  table written by any engine**, or rebuilt, without rewriting data
+  (`python -m lakehouse_ann.write attach`).
+* **Footer** (`--index-location footer`, §1). The blob is spliced into the data
+  file. This saves the index read from a second object, but adding or
+  rebuilding an index means rewriting the data file.
+
+**Registry.** Today's Iceberg spec has no per-data-file index pointer. Listing
+custom blob types as table *statistics* would break readers that accept only
+the known statistics blob types; pyiceberg 0.12, for example, then fails to
+load the table. So the table property `lakehouse_ann.index.<column>` holds a
+JSON list of Puffin paths. Every engine ignores unknown properties. Data files
+and their Puffin indexes are committed in one transaction, so readers never see
+one without the other. A spec-level pointer, modelled on deletion vectors'
+`referenced_data_file` / `content_offset` / `content_size_in_bytes` manifest
+fields, would replace the property ([other engines](other-engines.md#what-a-community-standard-would-need-to-agree-on)).
+
+**Validation.** An index stores row positions of one exact data file. A Puffin
+ref is used only if the planned file's path, size and record count all match
+the blob's properties. Otherwise the reader falls back to a footer index, if
+there is one, and then to an exact scan. A stale or wrong registry entry
+therefore costs speed, never correctness.
+
+**Cost.** Bytes and requests are the same as with the footer
+([benchmarks §7](benchmarks.md#7-where-the-index-lives-footer-vs-puffin)): one
+ranged read of the index blob, plus the Puffin footer once per query, cached
+(about 0.2–2 ms locally for 16 files). Puffin files are immutable, so their
+footers can be cached indefinitely.
+
 ## 2. The per-file kernel (`lakehouse_ann/search.py`)
 
 One task searches one file, doing the cheapest work first:
 
-1. **Footer.** Opening the file reads it anyway, and it carries the index pointers.
+1. **Footer.** Opening the file reads it anyway. The index comes from the file's
+   Puffin ref, resolved at planning, or from the footer pointers.
 2. **Filter.** Read only the filter columns and evaluate the predicate (a Daft
    expression or a pyarrow expression) into a row mask, together with any
    deleted positions. If nothing matches, the file is done and its index is never read.

@@ -77,11 +77,14 @@ Ray task with `runner="ray"`:
    (optional, on by default; see below), and the IVF blob spliced in front of the footer;
 4. **verify** the footer pointer, the blob's row and cluster counts, and statistics on the
    partition columns;
-5. **upload** under `<table location>/data/<partition path>/`. A file already
+5. **upload** under `<table location>/data/<partition path>/`, with the index in
+   a Puffin file under `metadata/` (default) or spliced into the data file
+   (`--index-location footer`). A file already
    there with the same row count and an index is skipped, so a failed run can
    simply be re-run.
 
-Then **one `add_files()` commit** registers every new file. pyiceberg infers
+Then **one commit** registers every new file (`add_files()`) together with its
+Puffin indexes. pyiceberg infers
 each file's partition from its column statistics, which is why every output
 file holds a single partition value. Supported transforms are identity
 (`col`) and truncate (`col:truncate[N]`), the order-preserving transforms that
@@ -94,6 +97,32 @@ code. On Ray, the catalog's FileIO travels inside every task, so workers need
 no credentials of their own. Staging and table locations must be reachable from
 every worker, which means object storage on a real cluster.
 
+## Indexing an existing table in place (`attach`)
+
+```bash
+python -m lakehouse_ann.write attach --catalog prod --table vec.docs --column embedding [--ray]
+```
+
+```python
+from lakehouse_ann.write import attach_indexes
+attach_indexes(load_catalog("prod").load_table("vec.docs"), "embedding", runner="ray")
+```
+
+For every data file of the current snapshot without a valid index, this reads
+the embedding column, runs k-means in the file's own row order, and writes the
+index into Puffin file(s) under `metadata/`, registered in one metadata commit.
+**No data file is rewritten**, so it works on tables written by Spark, Trino,
+Flink or anything else. If a file's embedding column is PLAIN and uncompressed,
+the whole file is read once to record byte runs for ranged vector reads
+(`--no-ranged-runs` skips that). Re-running indexes only files added or
+rewritten since. Files with a footer index, or with null vectors, are skipped.
+
+Attaching gives correct, index-assisted search immediately. Most of the I/O
+saving, though, comes from rows being sorted by cluster
+([benchmarks §7](benchmarks.md#7-where-the-index-lives-footer-vs-puffin)).
+When that matters, re-index into a sorted copy later with
+`index --from-table`.
+
 ## Choosing the knobs
 
 | knob | guidance |
@@ -102,6 +131,7 @@ every worker, which means object storage on a real cluster.
 | `n_clusters` | **A few hundred per file**, so that clusters are at least as large as a row group (`rows / n_clusters ≥ row_group_size`). More clusters give finer probes; fewer give more matching rows per probe. |
 | `row_group_size` | With a compressed embedding column (the default), vectors are fetched by whole row group: match it to the cluster size (about 512) so a probe reads a few groups at about 1.3× amplification. With `--no-compress-embedding`, the writer also records IFVR byte runs and fetches exact ranges, so row-group size matters much less. |
 | partitioning | **Partition by the columns you filter on.** Pure files are pruned by the catalog and need no filter inside. That is also the fix for filters correlated with the vectors ([design §4](design.md#4-layout-where-most-of-the-speed-comes-from)). |
+| index location | **Puffin (default)**: indexes in Puffin files next to the data, so data files stay plain and indexes can be rebuilt without rewriting them. `--index-location footer` splices the index into each data file instead, which saves one object read per file. |
 | cluster sort | **On by default; optional.** It isn't needed for correct results, but each probe then reads a few contiguous ranges instead of most of the file (about 10× less I/O in our tests). Turn it off (`--no-cluster-sort`) only if you need the file's row order for something else, such as sorting by a column to sharpen its row-group statistics. |
 | compression | Float32 embeddings barely compress (about 1% on the Granite tables), so the choice is about fetch granularity. zstd (default) means whole-row-group fetches, so keep the groups small. Uncompressed PLAIN adds IFVR exact ranged reads. |
 
