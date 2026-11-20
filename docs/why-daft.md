@@ -58,4 +58,4 @@ engines.
 Nothing in the index format depends on Daft. The footer blobs are documented
 ([design §1](design.md#1-an-indexed-parquet-file)) and every file stays plain
 Parquet, so another engine could implement the same per-file kernel behind its
-own data source API.
+own data source API. [Other engines](other-engines.md) describes what that takes.

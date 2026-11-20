@@ -138,6 +138,10 @@ stays plain numpy/pyarrow, and its class UDFs run embedding models on GPUs for t
 write path. A longer comparison with Spark, DuckDB, Ray Data and pyiceberg on
 its own is in [docs/why-daft.md](docs/why-daft.md).
 
+The index itself is engine-neutral: every file stays plain Parquet. For what
+Spark, Trino, DuckDB or any other engine would add to search it fast, see
+[docs/other-engines.md](docs/other-engines.md).
+
 ## Quick start
 
 ```bash
@@ -167,7 +171,7 @@ lakehouse_ann/   format.py  footer.py   IFVI/IFVR index blobs and how they sit i
 examples/        one script per query mode, write-path scripts, remote catalog
 bench/           synthetic data, local benchmarks, SQL demo, Ray benchmark, results/*.json
 deploy/          Ray on Kubernetes: manifest, deploy script, Dockerfile
-docs/            design, querying, writing, benchmarks, why Daft
+docs/            design, querying, writing, benchmarks, why Daft, other engines
 tests/           format, footer, kernel, writer, all front ends, write path
 ```
 
